@@ -1,39 +1,26 @@
-# Indian Pre-Owned Car Price Prediction — Streamlit App
+# 🤝 AI Profile Matching System
 
-## Folder structure
+An AI-powered profile matching system that recommends compatible users based on professional information, interests, personality type, location, and historical feedback.
+
+## Features
+
+- Profile-based matching
+- TF-IDF text similarity
+- Cosine similarity
+- MBTI compatibility
+- Location compatibility
+- Feedback-based machine learning
+- Logistic Regression
+- Learned matching weights
+- Streamlit web interface
+- Top profile recommendations
+
+## Project Structure
 
 ```text
-Indian-Car-Price-Prediction/
-├── app/
-│   └── app.py
-├── data/
-│   └── Cap_Training_Data_2025.csv
-├── models/
-│   └── car_price_pipeline.pkl
-└── requirements.txt
-```
-
-## Important
-
-The model file should be a **single saved preprocessing + ML pipeline** named:
-
-`models/car_price_pipeline.pkl`
-
-It should accept the 15 raw feature columns used by the app and return predicted `Price` values.
-
-## Run locally
-
-```bash
-pip install -r requirements.txt
-streamlit run app/app.py
-```
-
-## Run in Google Colab
-
-Install packages:
-
-```python
-!pip install -q streamlit pyngrok joblib scikit-learn xgboost lightgbm
-```
-
-Then start the app with your preferred public-tunnel method.
+ai_profile_matching_system_final/
+├── app.py
+├── users.csv
+├── feedback.csv
+├── requirements.txt
+└── README.md
