@@ -1,12 +1,13 @@
-import streamlit as st
+ import streamlit as st
 import pandas as pd
+import numpy as np
+import re
 from pathlib import Path
+from datetime import datetime
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
 
 
 # ============================================================
@@ -35,18 +36,26 @@ FEEDBACK_FILE = BASE_DIR / "feedback.csv"
 # ============================================================
 
 if not USERS_FILE.exists():
-    st.error(f"Required file not found: {USERS_FILE}")
-    st.info("Make sure users.csv is in the same folder as app.py.")
+
+    st.error(
+        f"Required file not found: {USERS_FILE}"
+    )
+
+    st.info(
+        "Make sure users.csv is in the same folder as app.py."
+    )
+
     st.stop()
+
 
 users = pd.read_csv(USERS_FILE)
 
 
 # ============================================================
-# CHECK REQUIRED USER COLUMNS
+# REQUIRED USER COLUMNS
 # ============================================================
 
-required_user_columns = [
+REQUIRED_USER_COLUMNS = [
     "user_id",
     "name",
     "age",
@@ -59,16 +68,21 @@ required_user_columns = [
     "intrests"
 ]
 
+
 missing_columns = [
-    col for col in required_user_columns
-    if col not in users.columns
+    column
+    for column in REQUIRED_USER_COLUMNS
+    if column not in users.columns
 ]
 
+
 if missing_columns:
+
     st.error(
         "Missing columns in users.csv: "
         + ", ".join(missing_columns)
     )
+
     st.stop()
 
 
@@ -76,7 +90,7 @@ if missing_columns:
 # CLEAN USER DATA
 # ============================================================
 
-text_columns = [
+TEXT_COLUMNS = [
     "name",
     "location",
     "profession",
@@ -86,94 +100,170 @@ text_columns = [
     "intrests"
 ]
 
-for col in text_columns:
-    users[col] = users[col].fillna("").astype(str).str.strip()
 
-users["user_id"] = users["user_id"].astype(str)
+for column in TEXT_COLUMNS:
 
-users["mbti"] = users["mbti"].str.upper()
+    users[column] = (
+        users[column]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
 
-users["location"] = users["location"].str.lower()
 
-users["profession"] = users["profession"].str.lower()
+users["user_id"] = (
+    users["user_id"]
+    .astype(str)
+    .str.strip()
+)
 
 
-# ============================================================
-# CREATE PROFILE TEXT
-# ============================================================
-
-users["profile_text"] = (
-    users["professional_summary"] + " "
-    + users["about_me"] + " "
-    + users["intrests"] + " "
-    + users["profession"]
+users["mbti"] = (
+    users["mbti"]
+    .str.upper()
+    .str.strip()
 )
 
 
 # ============================================================
-# TF-IDF PROFILE SIMILARITY
+# TEXT CLEANING
+# ============================================================
+
+def clean_text(text):
+
+    text = str(text).lower()
+
+    text = re.sub(
+        r"[^a-zA-Z0-9\s]",
+        " ",
+        text
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    )
+
+    return text.strip()
+
+
+# ============================================================
+# CREATE COMBINED PROFILE TEXT
+# ============================================================
+
+users["combined_text"] = (
+    users["professional_summary"].fillna("")
+    + " "
+    + users["about_me"].fillna("")
+    + " "
+    + users["intrests"].fillna("")
+    + " "
+    + users["profession"].fillna("")
+)
+
+
+users["clean_text"] = (
+    users["combined_text"]
+    .apply(clean_text)
+)
+
+
+# ============================================================
+# TF-IDF
 # ============================================================
 
 vectorizer = TfidfVectorizer(
-    stop_words="english",
-    ngram_range=(1, 2)
+    stop_words="english"
 )
+
 
 tfidf_matrix = vectorizer.fit_transform(
-    users["profile_text"]
+    users["clean_text"]
 )
 
-text_similarity_matrix = cosine_similarity(
+
+# ============================================================
+# COSINE SIMILARITY
+# ============================================================
+
+text_similarity = cosine_similarity(
     tfidf_matrix
 )
+
+
+# ============================================================
+# MBTI GROUPS
+# ============================================================
+
+MBTI_GROUPS = {
+
+    "NT": [
+        "INTJ",
+        "INTP",
+        "ENTJ",
+        "ENTP"
+    ],
+
+    "NF": [
+        "INFJ",
+        "INFP",
+        "ENFJ",
+        "ENFP"
+    ],
+
+    "SJ": [
+        "ISTJ",
+        "ISFJ",
+        "ESTJ",
+        "ESFJ"
+    ],
+
+    "SP": [
+        "ISTP",
+        "ISFP",
+        "ESTP",
+        "ESFP"
+    ]
+}
+
+
+def get_mbti_group(mbti):
+
+    mbti = str(mbti).upper().strip()
+
+    for group, types in MBTI_GROUPS.items():
+
+        if mbti in types:
+            return group
+
+    return None
 
 
 # ============================================================
 # MBTI COMPATIBILITY
 # ============================================================
 
-def mbti_group(mbti):
-    """
-    Groups MBTI types into four broad categories.
-    """
-
-    mbti = str(mbti).upper()
-
-    if mbti.endswith("NT"):
-        return "NT"
-
-    if mbti.endswith("NF"):
-        return "NF"
-
-    if mbti.endswith("SJ"):
-        return "SJ"
-
-    if mbti.endswith("SP"):
-        return "SP"
-
-    return "UNKNOWN"
-
-
 def mbti_compatibility(mbti1, mbti2):
 
-    mbti1 = str(mbti1).upper()
-    mbti2 = str(mbti2).upper()
+    mbti1 = str(mbti1).upper().strip()
+    mbti2 = str(mbti2).upper().strip()
 
-    if not mbti1 or not mbti2:
-        return 0.0
-
+    # Same personality
     if mbti1 == mbti2:
         return 1.0
 
-    group1 = mbti_group(mbti1)
-    group2 = mbti_group(mbti2)
+    group1 = get_mbti_group(mbti1)
+    group2 = get_mbti_group(mbti2)
 
-    if group1 == "UNKNOWN" or group2 == "UNKNOWN":
-        return 0.0
-
-    if group1 == group2:
+    # Same personality group
+    if (
+        group1 is not None
+        and group1 == group2
+    ):
         return 0.7
 
+    # Different group
     return 0.4
 
 
@@ -181,24 +271,38 @@ def mbti_compatibility(mbti1, mbti2):
 # LOCATION COMPATIBILITY
 # ============================================================
 
-def location_compatibility(location1, location2):
+def location_compatibility(
+    location1,
+    location2
+):
 
-    location1 = str(location1).lower().strip()
-    location2 = str(location2).lower().strip()
+    location1 = (
+        str(location1)
+        .strip()
+        .lower()
+    )
 
-    if location1 and location1 == location2:
+    location2 = (
+        str(location2)
+        .strip()
+        .lower()
+    )
+
+    if location1 == location2:
         return 1.0
 
-    return 0.0
+    return 0.5
 
 
 # ============================================================
-# LOAD / CREATE FEEDBACK FILE
+# FEEDBACK FILE
 # ============================================================
 
 if FEEDBACK_FILE.exists():
 
-    feedback = pd.read_csv(FEEDBACK_FILE)
+    feedback = pd.read_csv(
+        FEEDBACK_FILE
+    )
 
 else:
 
@@ -206,7 +310,8 @@ else:
         columns=[
             "user_id",
             "matched_user_id",
-            "action"
+            "action",
+            "timestamp"
         ]
     )
 
@@ -217,252 +322,756 @@ else:
 
 
 # ============================================================
-# CHECK FEEDBACK COLUMNS
+# NORMALIZE FEEDBACK COLUMNS
 # ============================================================
 
-required_feedback_columns = [
-    "user_id",
-    "matched_user_id",
-    "action"
+if "user_id" not in feedback.columns:
+    feedback["user_id"] = ""
+
+if "matched_user_id" not in feedback.columns:
+    feedback["matched_user_id"] = ""
+
+if "action" not in feedback.columns:
+    feedback["action"] = ""
+
+if "timestamp" not in feedback.columns:
+    feedback["timestamp"] = ""
+
+
+feedback["user_id"] = (
+    feedback["user_id"]
+    .astype(str)
+    .str.strip()
+)
+
+
+feedback["matched_user_id"] = (
+    feedback["matched_user_id"]
+    .astype(str)
+    .str.strip()
+)
+
+
+# ============================================================
+# CONVERT FEEDBACK ACTION
+# ============================================================
+
+def convert_action(action):
+
+    value = str(action).strip().lower()
+
+    if value in [
+        "1",
+        "accept",
+        "accepted",
+        "true"
+    ]:
+        return 1
+
+    if value in [
+        "0",
+        "reject",
+        "rejected",
+        "false"
+    ]:
+        return 0
+
+    return None
+
+
+feedback["accepted"] = (
+    feedback["action"]
+    .apply(convert_action)
+)
+
+
+# ============================================================
+# BASE WEIGHTS
+# ============================================================
+
+BASE_WEIGHTS = np.array(
+    [
+        0.50,   # Text similarity
+        0.30,   # MBTI
+        0.20    # Location
+    ],
+    dtype=float
+)
+
+
+FEATURES = [
+    "text_similarity",
+    "mbti_score",
+    "location_score"
 ]
 
-for col in required_feedback_columns:
-
-    if col not in feedback.columns:
-        feedback[col] = ""
-
-
-feedback["user_id"] = feedback["user_id"].astype(str)
-feedback["matched_user_id"] = feedback["matched_user_id"].astype(str)
-feedback["action"] = feedback["action"].astype(str).str.lower()
-
 
 # ============================================================
-# SAVE FEEDBACK FUNCTION
+# NORMALIZE WEIGHTS
 # ============================================================
 
-def save_feedback(user_id, matched_user_id, action):
+def normalize_weights(
+    weights,
+    fallback=None
+):
 
-    new_feedback = pd.DataFrame(
-        [{
-            "user_id": str(user_id),
-            "matched_user_id": str(matched_user_id),
-            "action": action
-        }]
+    weights = np.abs(
+        np.asarray(
+            weights,
+            dtype=float
+        )
     )
 
-    new_feedback.to_csv(
+    total = weights.sum()
+
+    if total == 0:
+
+        if fallback is not None:
+
+            return np.asarray(
+                fallback,
+                dtype=float
+            )
+
+        return BASE_WEIGHTS.copy()
+
+    return weights / total
+
+
+# ============================================================
+# CREATE FEATURES FROM FEEDBACK
+# ============================================================
+
+def create_feedback_features(
+    feedback_df
+):
+
+    rows = []
+
+    for _, row in feedback_df.iterrows():
+
+        try:
+
+            user_matches = users.index[
+                users["user_id"]
+                == str(row["user_id"])
+            ]
+
+            matched_matches = users.index[
+                users["user_id"]
+                == str(row["matched_user_id"])
+            ]
+
+            if (
+                len(user_matches) == 0
+                or
+                len(matched_matches) == 0
+            ):
+                continue
+
+
+            user_index = user_matches[0]
+
+            matched_index = matched_matches[0]
+
+
+            # ------------------------------------------------
+            # Text similarity
+            # ------------------------------------------------
+
+            text_score = float(
+                text_similarity[
+                    user_index,
+                    matched_index
+                ]
+            )
+
+
+            # ------------------------------------------------
+            # MBTI
+            # ------------------------------------------------
+
+            mbti_score = float(
+                mbti_compatibility(
+                    users.iloc[
+                        user_index
+                    ]["mbti"],
+
+                    users.iloc[
+                        matched_index
+                    ]["mbti"]
+                )
+            )
+
+
+            # ------------------------------------------------
+            # Location
+            # ------------------------------------------------
+
+            location_score = float(
+                location_compatibility(
+                    users.iloc[
+                        user_index
+                    ]["location"],
+
+                    users.iloc[
+                        matched_index
+                    ]["location"]
+                )
+            )
+
+
+            accepted = convert_action(
+                row["action"]
+            )
+
+
+            if accepted is None:
+                continue
+
+
+            rows.append({
+
+                "user_id":
+                    str(row["user_id"]),
+
+                "matched_user_id":
+                    str(row["matched_user_id"]),
+
+                "text_similarity":
+                    text_score,
+
+                "mbti_score":
+                    mbti_score,
+
+                "location_score":
+                    location_score,
+
+                "accepted":
+                    accepted
+            })
+
+
+        except Exception:
+
+            continue
+
+
+    return pd.DataFrame(rows)
+
+
+# ============================================================
+# LEARN DYNAMIC WEIGHTS
+# ============================================================
+
+def learn_dynamic_weights(
+    feedback_df
+):
+
+    feature_data = create_feedback_features(
+        feedback_df
+    )
+
+
+    # --------------------------------------------------------
+    # Default global weights
+    # --------------------------------------------------------
+
+    global_weights = (
+        BASE_WEIGHTS.copy()
+    )
+
+
+    # --------------------------------------------------------
+    # User-specific weights
+    # --------------------------------------------------------
+
+    personalized_weights = {}
+
+
+    # ========================================================
+    # GLOBAL MODEL
+    # ========================================================
+
+    if (
+        len(feature_data) >= 4
+        and
+        feature_data["accepted"].nunique() >= 2
+    ):
+
+        try:
+
+            model = LogisticRegression(
+                random_state=42,
+                max_iter=1000
+            )
+
+
+            model.fit(
+                feature_data[FEATURES],
+                feature_data["accepted"]
+            )
+
+
+            global_weights = normalize_weights(
+                model.coef_[0],
+                BASE_WEIGHTS
+            )
+
+
+        except Exception:
+
+            global_weights = (
+                BASE_WEIGHTS.copy()
+            )
+
+
+    # ========================================================
+    # PERSONALIZED USER MODEL
+    # ========================================================
+
+    if not feature_data.empty:
+
+        for user_id, group in (
+            feature_data.groupby("user_id")
+        ):
+
+            # Need enough examples
+            if len(group) < 4:
+                continue
+
+
+            # Need both Accept and Reject
+            if group["accepted"].nunique() < 2:
+                continue
+
+
+            try:
+
+                user_model = LogisticRegression(
+                    random_state=42,
+                    max_iter=1000
+                )
+
+
+                user_model.fit(
+                    group[FEATURES],
+                    group["accepted"]
+                )
+
+
+                personalized_weights[
+                    str(user_id)
+                ] = normalize_weights(
+                    user_model.coef_[0],
+                    global_weights
+                )
+
+
+            except Exception:
+
+                continue
+
+
+    return (
+        global_weights,
+        personalized_weights,
+        feature_data
+    )
+
+
+# ============================================================
+# TRAIN ADAPTIVE SYSTEM
+# ============================================================
+
+(
+    dynamic_global_weights,
+    dynamic_user_weights,
+    dynamic_feedback_features
+) = learn_dynamic_weights(
+    feedback
+)
+
+
+# ============================================================
+# CALCULATE ADAPTIVE MATCH SCORE
+# ============================================================
+
+def calculate_match_components(
+    user_id,
+    matched_user_id
+):
+
+    user_matches = users.index[
+        users["user_id"]
+        == str(user_id)
+    ]
+
+    matched_matches = users.index[
+        users["user_id"]
+        == str(matched_user_id)
+    ]
+
+
+    if (
+        len(user_matches) == 0
+        or
+        len(matched_matches) == 0
+    ):
+
+        return None
+
+
+    user_index = user_matches[0]
+
+    matched_index = matched_matches[0]
+
+
+    # --------------------------------------------------------
+    # Text score
+    # --------------------------------------------------------
+
+    text_score = float(
+        text_similarity[
+            user_index,
+            matched_index
+        ]
+    )
+
+
+    # --------------------------------------------------------
+    # MBTI score
+    # --------------------------------------------------------
+
+    mbti_score = float(
+        mbti_compatibility(
+            users.iloc[
+                user_index
+            ]["mbti"],
+
+            users.iloc[
+                matched_index
+            ]["mbti"]
+        )
+    )
+
+
+    # --------------------------------------------------------
+    # Location score
+    # --------------------------------------------------------
+
+    location_score = float(
+        location_compatibility(
+            users.iloc[
+                user_index
+            ]["location"],
+
+            users.iloc[
+                matched_index
+            ]["location"]
+        )
+    )
+
+
+    # --------------------------------------------------------
+    # Get learned weights
+    # --------------------------------------------------------
+
+    weights = dynamic_user_weights.get(
+        str(user_id),
+        dynamic_global_weights
+    )
+
+
+    # --------------------------------------------------------
+    # Final score
+    # --------------------------------------------------------
+
+    total_score = (
+
+        weights[0] * text_score
+
+        +
+
+        weights[1] * mbti_score
+
+        +
+
+        weights[2] * location_score
+
+    )
+
+
+    return {
+
+        "score":
+            round(
+                total_score * 100,
+                2
+            ),
+
+        "text_score":
+            round(
+                text_score * 100,
+                2
+            ),
+
+        "mbti_score":
+            round(
+                mbti_score * 100,
+                2
+            ),
+
+        "location_score":
+            round(
+                location_score * 100,
+                2
+            ),
+
+        "weights":
+            weights
+    }
+
+
+# ============================================================
+# GET TOP MATCHES
+# ============================================================
+
+def get_top_matches(
+    selected_user_id,
+    number_of_matches=5
+):
+
+    results = []
+
+
+    for _, candidate in users.iterrows():
+
+        candidate_id = str(
+            candidate["user_id"]
+        )
+
+
+        # Don't recommend yourself
+        if candidate_id == str(
+            selected_user_id
+        ):
+            continue
+
+
+        components = calculate_match_components(
+            selected_user_id,
+            candidate_id
+        )
+
+
+        if components is None:
+            continue
+
+
+        results.append({
+
+            "user_id":
+                candidate_id,
+
+            "name":
+                candidate["name"],
+
+            "age":
+                candidate["age"],
+
+            "location":
+                candidate["location"],
+
+            "profession":
+                candidate["profession"],
+
+            "experience_years":
+                candidate["experience_years"],
+
+            "professional_summary":
+                candidate[
+                    "professional_summary"
+                ],
+
+            "about_me":
+                candidate["about_me"],
+
+            "mbti":
+                candidate["mbti"],
+
+            "intrests":
+                candidate["intrests"],
+
+            "score":
+                components["score"],
+
+            "text_score":
+                components["text_score"],
+
+            "mbti_score":
+                components["mbti_score"],
+
+            "location_score":
+                components["location_score"],
+
+            "weights":
+                components["weights"]
+        })
+
+
+    results.sort(
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+
+    return results[
+        :number_of_matches
+    ]
+
+
+# ============================================================
+# SAVE FEEDBACK
+# ============================================================
+
+def save_feedback(
+    user_id,
+    matched_user_id,
+    action
+):
+
+    action_value = (
+        1
+        if action == "accept"
+        else 0
+    )
+
+
+    new_feedback = pd.DataFrame([
+        {
+
+            "user_id":
+                str(user_id),
+
+            "matched_user_id":
+                str(matched_user_id),
+
+            "action":
+                action_value,
+
+            "timestamp":
+                datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+        }
+    ])
+
+
+    # --------------------------------------------------------
+    # Remove previous decision for same pair
+    # --------------------------------------------------------
+
+    if FEEDBACK_FILE.exists():
+
+        current_feedback = pd.read_csv(
+            FEEDBACK_FILE
+        )
+
+        if not current_feedback.empty:
+
+            current_feedback[
+                "user_id"
+            ] = (
+                current_feedback[
+                    "user_id"
+                ].astype(str)
+            )
+
+            current_feedback[
+                "matched_user_id"
+            ] = (
+                current_feedback[
+                    "matched_user_id"
+                ].astype(str)
+            )
+
+
+            current_feedback = (
+                current_feedback[
+                    ~(
+                        (
+                            current_feedback[
+                                "user_id"
+                            ]
+                            == str(user_id)
+                        )
+                        &
+                        (
+                            current_feedback[
+                                "matched_user_id"
+                            ]
+                            == str(
+                                matched_user_id
+                            )
+                        )
+                    ]
+                ]
+            )
+
+        else:
+
+            current_feedback = pd.DataFrame(
+                columns=[
+                    "user_id",
+                    "matched_user_id",
+                    "action",
+                    "timestamp"
+                ]
+            )
+
+    else:
+
+        current_feedback = pd.DataFrame(
+            columns=[
+                "user_id",
+                "matched_user_id",
+                "action",
+                "timestamp"
+            ]
+        )
+
+
+    # --------------------------------------------------------
+    # Add latest feedback
+    # --------------------------------------------------------
+
+    current_feedback = pd.concat(
+        [
+            current_feedback,
+            new_feedback
+        ],
+        ignore_index=True
+    )
+
+
+    current_feedback.to_csv(
         FEEDBACK_FILE,
-        mode="a",
-        header=not FEEDBACK_FILE.exists()
-        or FEEDBACK_FILE.stat().st_size == 0,
         index=False
     )
 
 
 # ============================================================
-# MACHINE LEARNING MODEL
+# APPLICATION HEADER
 # ============================================================
 
-def train_feedback_model():
-
-    if feedback.empty:
-        return None, [0.50, 0.30, 0.20], None
-
-    feature_rows = []
-    labels = []
-
-    for _, row in feedback.iterrows():
-
-        user_id = str(row["user_id"])
-        matched_id = str(row["matched_user_id"])
-        action = str(row["action"]).lower()
-
-        if user_id not in users["user_id"].values:
-            continue
-
-        if matched_id not in users["user_id"].values:
-            continue
-
-        if action not in ["accept", "reject"]:
-            continue
-
-        user_index = users.index[
-            users["user_id"] == user_id
-        ][0]
-
-        matched_index = users.index[
-            users["user_id"] == matched_id
-        ][0]
-
-        text_score = text_similarity_matrix[
-            user_index,
-            matched_index
-        ]
-
-        mbti_score = mbti_compatibility(
-            users.loc[user_index, "mbti"],
-            users.loc[matched_index, "mbti"]
-        )
-
-        location_score = location_compatibility(
-            users.loc[user_index, "location"],
-            users.loc[matched_index, "location"]
-        )
-
-        feature_rows.append([
-            text_score,
-            mbti_score,
-            location_score
-        ])
-
-        labels.append(
-            1 if action == "accept" else 0
-        )
-
-    if len(feature_rows) < 10:
-        return None, [0.50, 0.30, 0.20], None
-
-    if len(set(labels)) < 2:
-        return None, [0.50, 0.30, 0.20], None
-
-    X = pd.DataFrame(
-        feature_rows,
-        columns=[
-            "text_similarity",
-            "mbti_compatibility",
-            "location_compatibility"
-        ]
-    )
-
-    y = pd.Series(labels)
-
-    scaler = StandardScaler()
-
-    X_scaled = scaler.fit_transform(X)
-
-    try:
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_scaled,
-            y,
-            test_size=0.2,
-            random_state=42,
-            stratify=y
-        )
-
-        model = LogisticRegression(
-            random_state=42
-        )
-
-        model.fit(
-            X_train,
-            y_train
-        )
-
-        accuracy = model.score(
-            X_test,
-            y_test
-        )
-
-        coefficients = abs(
-            model.coef_[0]
-        )
-
-        if coefficients.sum() == 0:
-
-            weights = [
-                0.50,
-                0.30,
-                0.20
-            ]
-
-        else:
-
-            weights = (
-                coefficients /
-                coefficients.sum()
-            ).tolist()
-
-        return model, weights, accuracy
-
-    except Exception:
-        return None, [0.50, 0.30, 0.20], None
-
-
-model, weights, model_accuracy = train_feedback_model()
-
-
-# ============================================================
-# MATCHING FUNCTION
-# ============================================================
-
-def calculate_matches(selected_user_id, number_of_matches):
-
-    selected_index = users.index[
-        users["user_id"] == selected_user_id
-    ][0]
-
-    results = []
-
-    for index, candidate in users.iterrows():
-
-        candidate_id = str(candidate["user_id"])
-
-        # Don't recommend the same person
-        if candidate_id == selected_user_id:
-            continue
-
-        text_score = text_similarity_matrix[
-            selected_index,
-            index
-        ]
-
-        mbti_score = mbti_compatibility(
-            users.loc[selected_index, "mbti"],
-            candidate["mbti"]
-        )
-
-        location_score = location_compatibility(
-            users.loc[selected_index, "location"],
-            candidate["location"]
-        )
-
-        final_score = (
-            weights[0] * text_score
-            + weights[1] * mbti_score
-            + weights[2] * location_score
-        )
-
-        results.append({
-            "index": index,
-            "user_id": candidate_id,
-            "name": candidate["name"],
-            "score": final_score,
-            "text_score": text_score,
-            "mbti_score": mbti_score,
-            "location_score": location_score
-        })
-
-    results = sorted(
-        results,
-        key=lambda x: x["score"],
-        reverse=True
-    )
-
-    return results[:number_of_matches]
-
-
-# ============================================================
-# TITLE
-# ============================================================
-
-st.title("🤖 AI Profile Matching System")
+st.title(
+    "🤖 AI Profile Matching System"
+)
 
 st.write(
-    "Find the most compatible profiles using "
-    "AI-based profile similarity, personality compatibility, "
-    "and location matching."
+    "An adaptive profile matching system that "
+    "learns from user Accept/Reject feedback."
 )
 
 
@@ -472,37 +1081,58 @@ st.write(
 
 with st.sidebar:
 
-    st.header("⚙️ Matching Model")
-
-    st.write(
-        f"**Profile similarity:** "
-        f"{weights[0] * 100:.1f}%"
+    st.header(
+        "🧠 AI Model"
     )
 
-    st.write(
-        f"**MBTI compatibility:** "
-        f"{weights[1] * 100:.1f}%"
-    )
 
     st.write(
-        f"**Location compatibility:** "
-        f"{weights[2] * 100:.1f}%"
+        f"👥 Users: **{len(users)}**"
     )
 
-    if model_accuracy is not None:
 
-        st.write(
-            f"**Feedback model accuracy:** "
-            f"{model_accuracy * 100:.1f}%"
+    st.write(
+        f"📝 Feedback records: "
+        f"**{len(dynamic_feedback_features)}**"
+    )
+
+
+    st.subheader(
+        "Current Weights"
+    )
+
+
+    st.write(
+        f"Profile Similarity: "
+        f"**{dynamic_global_weights[0] * 100:.2f}%**"
+    )
+
+
+    st.write(
+        f"MBTI Compatibility: "
+        f"**{dynamic_global_weights[1] * 100:.2f}%**"
+    )
+
+
+    st.write(
+        f"Location Compatibility: "
+        f"**{dynamic_global_weights[2] * 100:.2f}%**"
+    )
+
+
+    if len(dynamic_user_weights) > 0:
+
+        st.success(
+            f"Personalized models: "
+            f"{len(dynamic_user_weights)} users"
         )
 
     else:
 
         st.info(
-            "The system is currently using "
-            "default matching weights. "
-            "More feedback is required to train "
-            "the feedback model."
+            "Personalized learning becomes "
+            "available after enough mixed feedback "
+            "from a user."
         )
 
 
@@ -510,81 +1140,126 @@ with st.sidebar:
 # USER SELECTION
 # ============================================================
 
-user_options = users["user_id"].tolist()
+st.subheader(
+    "👤 Select Your Profile"
+)
 
-selected_user_id = st.selectbox(
-    "Select your profile",
+
+user_options = users[
+    "user_id"
+].tolist()
+
+
+selected_user = st.selectbox(
+
+    "Choose a user",
+
     user_options,
-    format_func=lambda uid: (
-        f"{users.loc[users['user_id'] == uid, 'name'].iloc[0]}"
-        f" — ID {uid}"
+
+    format_func=lambda user_id: (
+
+        f"{users.loc["
+        "users['user_id'] == user_id,"
+        "'name'"
+        "].iloc[0]} "
+        f"({user_id})"
     )
 )
 
 
-selected_user = users[
-    users["user_id"] == selected_user_id
+selected_profile = users[
+    users["user_id"]
+    == selected_user
 ].iloc[0]
 
 
 # ============================================================
-# SELECTED USER PROFILE
+# USER PROFILE DISPLAY
 # ============================================================
 
-st.subheader("👤 Your Profile")
+with st.expander(
+    "View Selected Profile",
+    expanded=True
+):
 
-col1, col2, col3 = st.columns(3)
+    col1, col2, col3 = st.columns(3)
 
-with col1:
+
+    with col1:
+
+        st.write(
+            f"**Name:** "
+            f"{selected_profile['name']}"
+        )
+
+        st.write(
+            f"**Age:** "
+            f"{selected_profile['age']}"
+        )
+
+        st.write(
+            f"**Location:** "
+            f"{selected_profile['location']}"
+        )
+
+
+    with col2:
+
+        st.write(
+            f"**Profession:** "
+            f"{selected_profile['profession']}"
+        )
+
+        st.write(
+            f"**Experience:** "
+            f"{selected_profile['experience_years']} years"
+        )
+
+
+    with col3:
+
+        st.write(
+            f"**MBTI:** "
+            f"{selected_profile['mbti']}"
+        )
+
+        st.write(
+            f"**Interests:** "
+            f"{selected_profile['intrests']}"
+        )
+
 
     st.write(
-        f"**Name:** {selected_user['name']}"
+        f"**Professional Summary:** "
+        f"{selected_profile['professional_summary']}"
     )
+
 
     st.write(
-        f"**Age:** {selected_user['age']}"
+        f"**About Me:** "
+        f"{selected_profile['about_me']}"
     )
-
-    st.write(
-        f"**Location:** {selected_user['location']}"
-    )
-
-with col2:
-
-    st.write(
-        f"**Profession:** {selected_user['profession']}"
-    )
-
-    st.write(
-        f"**Experience:** "
-        f"{selected_user['experience_years']} years"
-    )
-
-    st.write(
-        f"**MBTI:** {selected_user['mbti']}"
-    )
-
-with col3:
-
-    st.write(
-        f"**Interests:** {selected_user['intrests']}"
-    )
-
-
-st.write(
-    f"**About:** {selected_user['about_me']}"
-)
 
 
 # ============================================================
 # NUMBER OF MATCHES
 # ============================================================
 
+max_matches = min(
+    10,
+    max(1, len(users) - 1)
+)
+
+
 number_of_matches = st.slider(
-    "Number of recommendations",
+
+    "Number of matches",
+
     min_value=1,
-    max_value=min(10, len(users) - 1),
-    value=min(5, len(users) - 1)
+
+    max_value=max_matches,
+
+    value=min(5, max_matches)
 )
 
 
@@ -593,230 +1268,324 @@ number_of_matches = st.slider(
 # ============================================================
 
 if st.button(
-    "🔎 Find Best Matches",
-    type="primary"
+    "🔍 Find Top Matches",
+    type="primary",
+    use_container_width=True
 ):
 
-    st.session_state["matches"] = calculate_matches(
-        selected_user_id,
-        number_of_matches
+    st.session_state.matches = (
+        get_top_matches(
+            selected_user,
+            number_of_matches
+        )
     )
+
+
+# ============================================================
+# INITIALIZE SESSION STATE
+# ============================================================
+
+if "matches" not in st.session_state:
+
+    st.session_state.matches = None
 
 
 # ============================================================
 # DISPLAY MATCHES
 # ============================================================
 
-if "matches" in st.session_state:
+if st.session_state.matches is not None:
 
-    st.subheader("🎯 Recommended Profiles")
+    st.subheader(
+        "🎯 Recommended Profiles"
+    )
 
-    matches = st.session_state["matches"]
 
-    if not matches:
+    matches = st.session_state.matches
+
+
+    if len(matches) == 0:
 
         st.warning(
-            "No matching profiles found."
+            "No matches found."
         )
 
-    else:
 
-        for rank, match in enumerate(
-            matches,
-            start=1
-        ):
+    for rank, row in enumerate(
+        matches,
+        start=1
+    ):
 
-            candidate = users[
-                users["user_id"] == match["user_id"]
-            ].iloc[0]
+        st.markdown("---")
 
-            st.markdown("---")
 
-            st.subheader(
-                f"#{rank} — {candidate['name']}"
-            )
+        # ----------------------------------------------------
+        # MATCH HEADER
+        # ----------------------------------------------------
 
-            col1, col2, col3 = st.columns(3)
+        st.subheader(
+            f"#{rank} — {row['name']}"
+        )
 
-            with col1:
 
-                st.write(
-                    f"📍 **Location:** "
-                    f"{candidate['location']}"
-                )
+        # ----------------------------------------------------
+        # BASIC INFORMATION
+        # ----------------------------------------------------
 
-                st.write(
-                    f"💼 **Profession:** "
-                    f"{candidate['profession']}"
-                )
+        col1, col2, col3 = st.columns(3)
 
-            with col2:
 
-                st.write(
-                    f"🧠 **MBTI:** "
-                    f"{candidate['mbti']}"
-                )
-
-                st.write(
-                    f"⭐ **Experience:** "
-                    f"{candidate['experience_years']} years"
-                )
-
-            with col3:
-
-                st.metric(
-                    "Match Score",
-                    f"{match['score'] * 100:.1f}%"
-                )
+        with col1:
 
             st.write(
-                f"**Professional Summary:** "
-                f"{candidate['professional_summary']}"
+                f"📍 **Location:** "
+                f"{row['location']}"
             )
 
             st.write(
-                f"**About:** "
-                f"{candidate['about_me']}"
+                f"💼 **Profession:** "
+                f"{row['profession']}"
+            )
+
+
+        with col2:
+
+            st.write(
+                f"🧠 **MBTI:** "
+                f"{row['mbti']}"
             )
 
             st.write(
-                f"**Interests:** "
-                f"{candidate['intrests']}"
+                f"⭐ **Experience:** "
+                f"{row['experience_years']} years"
             )
 
-            # ------------------------------------------------
-            # MATCH COMPONENTS
-            # ------------------------------------------------
 
-            st.write("### 📊 Match Analysis")
+        with col3:
 
-            score_col1, score_col2, score_col3 = st.columns(3)
+            st.metric(
+                "Compatibility",
+                f"{row['score']:.2f}%"
+            )
 
-            with score_col1:
 
-                st.metric(
-                    "Profile Similarity",
-                    f"{match['text_score'] * 100:.1f}%"
+        # ----------------------------------------------------
+        # PROFILE
+        # ----------------------------------------------------
+
+        st.write(
+            f"**Professional Summary:** "
+            f"{row['professional_summary']}"
+        )
+
+
+        st.write(
+            f"**About:** "
+            f"{row['about_me']}"
+        )
+
+
+        st.write(
+            f"**Interests:** "
+            f"{row['intrests']}"
+        )
+
+
+        # ----------------------------------------------------
+        # MATCH ANALYSIS
+        # ----------------------------------------------------
+
+        st.write(
+            "### 📊 Match Analysis"
+        )
+
+
+        score1, score2, score3 = st.columns(3)
+
+
+        with score1:
+
+            st.metric(
+                "Profile Similarity",
+                f"{row['text_score']:.2f}%"
+            )
+
+
+        with score2:
+
+            st.metric(
+                "MBTI Compatibility",
+                f"{row['mbti_score']:.2f}%"
+            )
+
+
+        with score3:
+
+            st.metric(
+                "Location Compatibility",
+                f"{row['location_score']:.2f}%"
+            )
+
+
+        # ----------------------------------------------------
+        # WHY THIS MATCH
+        # ----------------------------------------------------
+
+        reasons = []
+
+
+        if row["text_score"] >= 50:
+
+            reasons.append(
+                "Strong similarity in profile "
+                "content, interests and profession."
+            )
+
+        elif row["text_score"] >= 25:
+
+            reasons.append(
+                "Moderate similarity in profile "
+                "content and interests."
+            )
+
+        else:
+
+            reasons.append(
+                "Limited textual similarity."
+            )
+
+
+        if row["mbti_score"] >= 100:
+
+            reasons.append(
+                "Both users have the same MBTI type."
+            )
+
+        elif row["mbti_score"] >= 70:
+
+            reasons.append(
+                "Both users belong to the same "
+                "MBTI personality group."
+            )
+
+        else:
+
+            reasons.append(
+                "Users belong to different MBTI groups."
+            )
+
+
+        if row["location_score"] >= 100:
+
+            reasons.append(
+                "Both users are from the same location."
+            )
+
+        else:
+
+            reasons.append(
+                "Users are from different locations."
+            )
+
+
+        st.write(
+            "### 💡 Why this match?"
+        )
+
+
+        for reason in reasons:
+
+            st.write(
+                f"• {reason}"
+            )
+
+
+        # ----------------------------------------------------
+        # ACCEPT / REJECT
+        # ----------------------------------------------------
+
+        st.write(
+            "### 🤝 Your Feedback"
+        )
+
+
+        accept_col, reject_col = st.columns(2)
+
+
+        with accept_col:
+
+            if st.button(
+                "👍 Accept",
+                key=(
+                    f"accept_"
+                    f"{selected_user}_"
+                    f"{row['user_id']}"
+                ),
+                use_container_width=True
+            ):
+
+                save_feedback(
+                    selected_user,
+                    row["user_id"],
+                    "accept"
                 )
 
-            with score_col2:
 
-                st.metric(
-                    "MBTI Compatibility",
-                    f"{match['mbti_score'] * 100:.1f}%"
+                st.success(
+                    f"Accepted {row['name']} ✅"
                 )
 
-            with score_col3:
 
-                st.metric(
-                    "Location Match",
-                    f"{match['location_score'] * 100:.1f}%"
+                st.toast(
+                    "Feedback saved!"
                 )
 
-            # ------------------------------------------------
-            # REASONS
-            # ------------------------------------------------
 
-            reasons = []
+                st.rerun()
 
-            if match["text_score"] >= 0.50:
 
-                reasons.append(
-                    "Your interests and profile are highly similar."
+        with reject_col:
+
+            if st.button(
+                "👎 Reject",
+                key=(
+                    f"reject_"
+                    f"{selected_user}_"
+                    f"{row['user_id']}"
+                ),
+                use_container_width=True
+            ):
+
+                save_feedback(
+                    selected_user,
+                    row["user_id"],
+                    "reject"
                 )
 
-            elif match["text_score"] >= 0.25:
 
-                reasons.append(
-                    "Your profiles have some common interests."
+                st.warning(
+                    f"Rejected {row['name']}."
                 )
 
-            if match["mbti_score"] >= 1.0:
 
-                reasons.append(
-                    "You have the same MBTI personality type."
+                st.toast(
+                    "Feedback saved!"
                 )
 
-            elif match["mbti_score"] >= 0.7:
 
-                reasons.append(
-                    "Your MBTI personality groups are similar."
-                )
-
-            if match["location_score"] == 1.0:
-
-                reasons.append(
-                    "You are from the same location."
-                )
-
-            if reasons:
-
-                st.write("### 💡 Why this is a match")
-
-                for reason in reasons:
-
-                    st.write(
-                        f"• {reason}"
-                    )
-
-            # ------------------------------------------------
-            # ACCEPT / REJECT BUTTONS
-            # ------------------------------------------------
-
-            st.write("### 🤝 Your Decision")
-
-            accept_col, reject_col = st.columns(2)
-
-            with accept_col:
-
-                if st.button(
-                    "✅ Accept",
-                    key=f"accept_{selected_user_id}_{match['user_id']}"
-                ):
-
-                    save_feedback(
-                        selected_user_id,
-                        match["user_id"],
-                        "accept"
-                    )
-
-                    st.success(
-                        f"You accepted {candidate['name']}!"
-                    )
-
-                    st.toast(
-                        "Match accepted! 👍"
-                    )
-
-            with reject_col:
-
-                if st.button(
-                    "❌ Reject",
-                    key=f"reject_{selected_user_id}_{match['user_id']}"
-                ):
-
-                    save_feedback(
-                        selected_user_id,
-                        match["user_id"],
-                        "reject"
-                    )
-
-                    st.warning(
-                        f"You rejected {candidate['name']}."
-                    )
-
-                    st.toast(
-                        "Match rejected."
-                    )
+                st.rerun()
 
 
 # ============================================================
-# FEEDBACK DATA
+# FEEDBACK INFORMATION
 # ============================================================
 
 st.markdown("---")
 
-with st.expander("📈 View Feedback Data"):
+
+with st.expander(
+    "📈 View Feedback History"
+):
 
     if FEEDBACK_FILE.exists():
 
@@ -824,10 +1593,11 @@ with st.expander("📈 View Feedback Data"):
             FEEDBACK_FILE
         )
 
+
         if current_feedback.empty:
 
             st.info(
-                "No feedback has been recorded yet."
+                "No feedback recorded yet."
             )
 
         else:
@@ -837,23 +1607,23 @@ with st.expander("📈 View Feedback Data"):
                 use_container_width=True
             )
 
-    else:
-
-        st.info(
-            "No feedback file found."
-        )
-
 
 # ============================================================
-# DATASET PREVIEW
+# DATASET INFORMATION
 # ============================================================
 
-with st.expander("📋 View Users Dataset"):
+with st.expander(
+    "📋 View Users Dataset"
+):
+
+    display_columns = [
+        column
+        for column in REQUIRED_USER_COLUMNS
+        if column in users.columns
+    ]
+
 
     st.dataframe(
-        users.drop(
-            columns=["profile_text"],
-            errors="ignore"
-        ),
+        users[display_columns],
         use_container_width=True
     )
