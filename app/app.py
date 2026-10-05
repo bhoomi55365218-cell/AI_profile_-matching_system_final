@@ -180,5 +180,5 @@ def calculate_learned_match_score(
     )
 
     location_score = location_compatibility(
-        users.iloc[user_index]["location"]
+        users.iloc[user_index]["location"],
          users.iloc[matched_indx]["location"])
