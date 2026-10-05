@@ -19,9 +19,12 @@ st.set_page_config(
 # -----------------------------
 # LOAD DATA
 # -----------------------------
-users = pd.read_csv("/content/users.csv")
-feedback = pd.read_csv("/content/feedback.csv")
+from pathlib import Path
 
+BASE_DIR = Path(__file__).resolve().parent
+
+users = pd.read_csv(BASE_DIR / "users.csv")
+feedback = pd.read_csv(BASE_DIR / "feedback.csv")
 # -----------------------------
 # TEXT PROCESSING
 # -----------------------------
